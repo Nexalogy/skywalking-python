@@ -93,7 +93,7 @@ def _sw__on_deliver_func(__on_deliver):
 
         with context.new_entry_span(op='RabbitMQ/Topic/' + exchange + '/Queue/' + routing_key
                                        + '/Consumer' or '', carrier=carrier) as span:
-            properties = save_carrier_async(context, span, carrier, properties)
+            header_frame.properties = save_carrier_async(context, span, carrier, header_frame.properties)
             span.layer = Layer.MQ
             span.component = Component.RabbitmqConsumer
             __on_deliver(this, method_frame, header_frame, body)
@@ -154,7 +154,6 @@ def get_carrier_from_properties(properties):
     return carrier
 
 def save_carrier_async(context, span, carrier, properties):
-
     if(carrier is not None and carrier.segment_id is not "" and context.segment.segment_id is not ""):
         carrier = span.inject_async()
         if properties.headers is None:
