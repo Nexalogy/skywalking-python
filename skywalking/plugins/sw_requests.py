@@ -15,7 +15,7 @@
 # limitations under the License.
 #
 
-from skywalking import Layer, Component, config
+from skywalking import Layer, Component, config, nx_config
 from skywalking.trace.context import get_context, NoopContext
 from skywalking.trace.span import NoopSpan
 from skywalking.trace.tags import TagHttpMethod, TagHttpURL, TagHttpStatusCode
@@ -34,6 +34,15 @@ def install():
 
     _request = Session.request
 
+    Session.request = _sw_request_func(_request)
+
+
+def _sw_request_func(_request):
+
+    peer_label_func = _peer_label_func()
+    op_label_func = _op_label_func()
+
+    from requests import Session
     def _sw_request(this: Session, method, url,
                     params=None, data=None, headers=None, cookies=None, files=None,
                     auth=None, timeout=None, allow_redirects=True, proxies=None,
@@ -49,8 +58,11 @@ def install():
                             proxies,
                             hooks, stream, verify, cert, json)
 
+        peer = peer_label_func(url_param)
+        op = op_label_func(url_param)
+        
         span = NoopSpan(NoopContext()) if config.ignore_http_method_check(method) \
-            else get_context().new_exit_span(op=url_param.path or '/', peer=url_param.netloc,
+            else get_context().new_exit_span(op=op, peer=peer,
                                              component=Component.Requests)
 
         with span:
@@ -76,4 +88,46 @@ def install():
 
             return res
 
-    Session.request = _sw_request
+    return _sw_request
+
+
+
+def _peer_label_func():
+
+    peer_func = None
+
+    if(nx_config.nexa_requests_peer_unique):
+
+        def _peer_label_unique_func(url_param):
+            return nx_config.nexa_requests_peer_unique_label
+
+        peer_func = _peer_label_unique_func
+
+    else:
+
+        def _peer_label_netloc_func(url_param):
+            return url_param.netloc
+
+        peer_func = _peer_label_netloc_func
+
+    return peer_func
+
+def _op_label_func():
+
+    op_func = None
+
+    if(nx_config.nexa_requests_op_type == 'netloc'):
+
+        def _op_label_netloc_(url_param):
+            return url_param.netloc
+
+        op_func = _op_label_netloc_
+
+    else:
+
+        def _op_label_path_func(url_param):
+            return url_param.path or '/'
+
+        op_func = _op_label_path_func
+
+    return op_func

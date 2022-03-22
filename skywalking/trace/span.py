@@ -117,6 +117,19 @@ class Span(ABC):
             'please report this in https://github.com/apache/skywalking/issues if you encounter this. '
         )
 
+    def inject_async(self) -> 'Carrier':
+
+        return Carrier(
+            trace_id=str(self.context.segment.related_traces[0]),
+            segment_id=str(self.context.segment.segment_id),
+            span_id=str(self.sid),
+            service=config.service_name,
+            service_instance=config.service_instance,
+            endpoint=str(self.op),
+            client_address=str(self.peer),
+            correlation=self.context._correlation,
+        )
+
     def extract(self, carrier: 'Carrier') -> 'Span':
         if carrier is None:
             return self

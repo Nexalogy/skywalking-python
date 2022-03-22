@@ -31,11 +31,14 @@ note = """"""
 
 def install():
     from pika.channel import Channel
+    from pika.adapters.blocking_connection import _ConsumerInfo
 
     _basic_publish = Channel.basic_publish
     __on_deliver = Channel._on_deliver
+    ___init__ = _ConsumerInfo.__init__
     Channel.basic_publish = _sw_basic_publish_func(_basic_publish)
     Channel._on_deliver = _sw__on_deliver_func(__on_deliver)
+    _ConsumerInfo.__init__ = _sw_consumer_info___init__(___init__)
 
 
 def _sw_basic_publish_func(_basic_publish):
@@ -46,9 +49,11 @@ def _sw_basic_publish_func(_basic_publish):
                           mandatory=False):
         peer = f'{this.connection.params.host}:{this.connection.params.port}'
         context = get_context()
+        carrier = get_carrier_from_properties(properties)
+
         import pika
         with context.new_exit_span(op=f'RabbitMQ/Topic/{exchange}/Queue/{routing_key}/Producer' or '/',
-                                   peer=peer, component=Component.RabbitmqProducer) as span:
+                                   peer=peer, component=Component.RabbitmqProducer, carrier=carrier) as span:
             carrier = span.inject()
             span.layer = Layer.MQ
             properties = pika.BasicProperties() if properties is None else properties
@@ -83,11 +88,12 @@ def _sw__on_deliver_func(__on_deliver):
             try:
                 if item.key in header_frame.properties.headers:
                     item.val = header_frame.properties.headers[item.key]
-            except TypeError:
+            except TypeError as te:
                 pass
 
         with context.new_entry_span(op='RabbitMQ/Topic/' + exchange + '/Queue/' + routing_key
                                        + '/Consumer' or '', carrier=carrier) as span:
+            properties = save_carrier_async(context, span, carrier, properties)
             span.layer = Layer.MQ
             span.component = Component.RabbitmqConsumer
             __on_deliver(this, method_frame, header_frame, body)
@@ -96,3 +102,64 @@ def _sw__on_deliver_func(__on_deliver):
             span.tag(TagMqQueue(routing_key))
 
     return _sw__on_deliver
+
+
+def _sw_consumer_info___init__(___init__):
+    def _sw___init__(this,
+                 consumer_tag,
+                 auto_ack,
+                 on_message_callback=None,
+                 alternate_event_sink=None):
+        
+        def _on_message_callback(that, method, properties, body):
+
+            exchange = method.exchange
+            routing_key = method.routing_key
+
+            carrier = get_carrier_from_properties(properties)
+            
+            context = get_context()
+
+            with context.new_local_span(op='on_message_callback: ' + 'RabbitMQ/Topic/' + exchange 
+                                           + '/Queue/' + routing_key + '/Consumer' or '', carrier=carrier) as span:
+                
+                properties = save_carrier_async(context, span, carrier, properties)
+                span.layer = Layer.MQ
+                span.component = Component.RabbitmqConsumer
+                on_message_callback(that, method, properties, body)
+                span.tag(TagMqTopic(exchange))
+                span.tag(TagMqQueue(routing_key))
+
+        return ___init__(this, consumer_tag,
+                 auto_ack,
+                 _on_message_callback,
+                 alternate_event_sink)
+
+    return _sw___init__
+
+def get_carrier_from_properties(properties):
+
+    carrier = None
+
+    in_carrier = Carrier()
+    for item in in_carrier:
+        try:
+            if item.key in properties.headers:
+                item.val = properties.headers[item.key]
+        except TypeError as te:
+            pass
+    if(in_carrier.is_valid):
+        carrier = in_carrier
+
+    return carrier
+
+def save_carrier_async(context, span, carrier, properties):
+
+    if(carrier is not None and carrier.segment_id is not "" and context.segment.segment_id is not ""):
+        carrier = span.inject_async()
+        if properties.headers is None:
+            properties.headers = {}
+        for item in carrier:
+            properties.headers[item.key] = item.val
+
+    return properties

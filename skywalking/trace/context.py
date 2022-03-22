@@ -111,15 +111,20 @@ class SpanContext(object):
 
         return span
 
-    def new_local_span(self, op: str) -> Span:
+    def new_local_span(self, op: str, carrier=None) -> Span:
         span = self.ignore_check(op, Kind.Local)
         if span is not None:
             return span
 
         spans = _spans()
         parent = spans[-1] if spans else None  # type: Span
+    
+        span = self.new_span(parent, Span, op=op, kind=Kind.Local)
 
-        return self.new_span(parent, Span, op=op, kind=Kind.Local)
+        if carrier is not None and carrier.is_valid:  # TODO: should this be done irrespective of inheritance?
+            span.extract(carrier=carrier)
+
+        return span
 
     def new_entry_span(self, op: str, carrier: 'Carrier' = None, inherit: Component = None) -> Span:
         span = self.ignore_check(op, Kind.Entry, carrier)
@@ -151,8 +156,8 @@ class SpanContext(object):
 
         return span
 
-    def new_exit_span(self, op: str, peer: str, component: Component = None, inherit: Component = None) -> Span:
-        span = self.ignore_check(op, Kind.Exit)
+    def new_exit_span(self, op: str, peer: str, component: Component = None, inherit: Component = None, carrier: 'Carrier' = None) -> Span:
+        span = self.ignore_check(op, Kind.Exit, carrier)
         if span is not None:
             return span
 
@@ -167,6 +172,9 @@ class SpanContext(object):
 
         else:
             span = self.new_span(parent, ExitSpan, op=op, peer=peer, component=component)
+
+            if carrier is not None and carrier.is_valid:  # TODO: should this be done irrespective of inheritance?
+                span.extract(carrier=carrier)
 
         if inherit:
             span.inherit = inherit
@@ -254,7 +262,7 @@ class NoopContext(SpanContext):
     def __init__(self):
         super().__init__()
 
-    def new_local_span(self, op: str) -> Span:
+    def new_local_span(self, op: str, carrier: None) -> Span:
         return NoopSpan(self)
 
     def new_entry_span(self, op: str, carrier: 'Carrier' = None, inherit: Component = None) -> Span:
